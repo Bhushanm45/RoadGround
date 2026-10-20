@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RoadGuard AI - Pune Municipal Corporation Road Monitoring</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <!-- Top Navigation Header -->
+    <header class="top-nav">
+        <div class="nav-left">
+            <div class="logo-group">
+                <i class="fa-solid fa-road-barrier logo-icon"></i>
+                <div class="brand-text">
+                    <span class="brand-title">RoadGuard AI</span>
+                    <span class="brand-sub">Pune Municipal Corporation • PMPML Bus Telemetry</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="nav-center">
+            <!-- Mode Selector Switch -->
+            <div class="mode-selector-pill">
+                <label for="systemModeSelect"><i class="fa-solid fa-layer-group"></i> View Mode:</label>
+                <select id="systemModeSelect" class="form-select mode-select">
+                    <option value="ALL">All Modes (Hardware & Sim)</option>
+                    <option value="HARDWARE" selected>Hardware Only (Real Device)</option>
+                    <option value="SIMULATION">Simulation Only (Synthetic)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="nav-right">
+            <button class="btn-action btn-sim" id="btnRunSim" title="Trigger a live simulated PMPML bus run">
+                <i class="fa-solid fa-play"></i> Run Bus Simulation
+            </button>
+            <button class="btn-action btn-seed" id="btnSeedDemo" title="Populate Pune test hotspots">
+                <i class="fa-solid fa-database"></i> Seed Pune Hotspots
+            </button>
+            <div class="user-profile">
+                <i class="fa-solid fa-circle-user profile-avatar"></i>
+                <div class="user-info">
+                    <span class="user-name">Roads Engineer</span>
+                    <span class="user-role">PMC Maintenance</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Real-Time Hardware Telemetry & Health Status Banner -->
+    <section class="hardware-status-strip">
+        <div class="hw-item" id="hwDeviceStatus">
+            <span class="hw-indicator dot-offline" id="hwDeviceDot"></span>
+            <span class="hw-label">ESP32 Hardware:</span>
+            <span class="hw-value" id="hwDeviceText">Checking device presence...</span>
+        </div>
+
+        <div class="hw-item" id="hwGpsStatus">
+            <i class="fa-solid fa-satellite hw-icon"></i>
+            <span class="hw-label">NEO-M8N / NEO-7M GPS:</span>
+            <span class="hw-value" id="hwGpsText">Waiting for fix...</span>
+        </div>
+
+        <div class="hw-item" id="hwModelStatus">
+            <i class="fa-solid fa-microchip hw-icon"></i>
+            <span class="hw-label">Inference Model:</span>
+            <span class="hw-value" id="hwModelText">Checking status...</span>
+        </div>
+
+        <div class="hw-item hw-right">
+            <span class="hw-tag" id="activeModeBadge"><i class="fa-solid fa-filter"></i> Showing: Hardware Data</span>
+        </div>
+    </section>
+
+    <!-- Main Container -->
+    <div class="dashboard-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <ul class="nav-menu">
+                <li class="active"><i class="fa-solid fa-gauge-high"></i> Dashboard</li>
+                <li><i class="fa-solid fa-map-location-dot"></i> Road Condition Map</li>
+                <li><i class="fa-solid fa-triangle-exclamation"></i> Hazard Alerts</li>
+                <li><i class="fa-solid fa-screwdriver-wrench"></i> Repair Workflow</li>
+                <li><i class="fa-solid fa-bus-simple"></i> PMPML Bus Fleet</li>
+                <li><i class="fa-solid fa-chart-line"></i> Analytics & Trends</li>
+            </ul>
+            <div class="sidebar-footer">
+                <div class="tech-spec">
+                    <strong>Hardware Configuration:</strong>
+                    <span>ESP32 DevKit V1 (30-pin)</span>
+                    <span>MPU6050 (I2C: SDA=21, SCL=22)</span>
+                    <span>NEO-7M/M8N (UART2: RX=16, TX=17)</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Metric KPI Summary Cards -->
+            <section class="kpi-grid">
+                <div class="kpi-card card-open">
+                    <div class="kpi-icon"><i class="fa-solid fa-circle-exclamation"></i></div>
+                    <div class="kpi-data">
+                        <span class="kpi-value" id="kpiOpenReports">--</span>
+                        <span class="kpi-label">Open Hazard Reports</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card card-high">
+                    <div class="kpi-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                    <div class="kpi-data">
+                        <span class="kpi-value" id="kpiHighPriority">--</span>
+                        <span class="kpi-label">High Priority Hotspots</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card card-med">
+                    <div class="kpi-icon"><i class="fa-solid fa-circle-info"></i></div>
+                    <div class="kpi-data">
+                        <span class="kpi-value" id="kpiMediumPriority">--</span>
+                        <span class="kpi-label">Medium Priority</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card card-resolved">
+                    <div class="kpi-icon"><i class="fa-solid fa-circle-check"></i></div>
+                    <div class="kpi-data">
+                        <span class="kpi-value" id="kpiResolved">--</span>
+                        <span class="kpi-label">Verified & Repaired</span>
+                    </div>
+                </div>
+
+                <div class="kpi-card card-buses">
+                    <div class="kpi-icon"><i class="fa-solid fa-bus"></i></div>
+                    <div class="kpi-data">
+                        <span class="kpi-value" id="kpiActiveBuses">--</span>
+                        <span class="kpi-label">Active Bus Units</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Map and Incident Feed Section -->
+            <div class="content-split">
+                <!-- Left: Interactive Map -->
+                <div class="map-container-box">
+                    <div class="box-header">
+                        <div class="box-title">
+                            <i class="fa-solid fa-map"></i> Road Condition Hotspots
+                        </div>
+                        <div class="filter-controls">
+                            <!-- Optional Locate Me Browser Button -->
+                            <button class="btn-locate" id="btnLocateMe" title="Pan map to your current location (Browser Geolocation)">
+                                <i class="fa-solid fa-crosshairs"></i> Locate Me
+                            </button>
+
+                            <label>Hazard:</label>
+                            <select id="typeFilter" class="form-select">
+                                <option value="ALL">All Types</option>
+                                <option value="POTHOLE">Potholes</option>
+                                <option value="SPEED_BREAKER">Speed Breakers</option>
+                                <option value="ROUGH_ROAD">Rough Roads</option>
+                            </select>
+
+                            <label>Status:</label>
+                            <select id="statusFilter" class="form-select">
+                                <option value="ALL">All Statuses</option>
+                                <option value="DETECTED">Detected</option>
+                                <option value="INSPECTION_REQUESTED">Inspection Requested</option>
+                                <option value="REPAIR_IN_PROGRESS">Repair In Progress</option>
+                                <option value="VERIFIED">Verified & Resolved</option>
+                            </select>
+                        </div>
+                    </div>
+                    <!-- Map Canvas -->
+                    <div id="map"></div>
+                    <div class="map-legend">
+                        <span class="legend-item"><span class="badge-dot dot-pothole"></span> Pothole</span>
+                        <span class="legend-item"><span class="badge-dot dot-bump"></span> Speed Breaker</span>
+                        <span class="legend-item"><span class="badge-dot dot-rough"></span> Rough Road</span>
+                        <span class="legend-item"><span class="badge-dot dot-verified"></span> Verified Repaired</span>
+                        <span class="legend-item"><span class="badge-dot dot-unknown"></span> Review / Unknown</span>
+                        <span class="legend-item ml-auto" style="margin-left:auto; color:#94A3B8;">
+                            <i class="fa-solid fa-info-circle"></i> Browser location is used only for view panning, not vehicle telemetry.
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Right: Recent Alerts & Live Stream -->
+                <div class="side-panel">
+                    <div class="panel-box">
+                        <div class="box-header">
+                            <div class="box-title"><i class="fa-solid fa-bell"></i> Live Alerts Stream</div>
+                            <span class="badge-live" id="streamLiveBadge">LIVE MONITOR</span>
+                        </div>
+                        <div class="alerts-stream" id="alertsStream">
+                            <div class="empty-state">Waiting for incoming telemetry packets...</div>
+                        </div>
+                    </div>
+
+                    <div class="panel-box mt-3">
+                        <div class="box-header">
+                            <div class="box-title"><i class="fa-solid fa-list-ol"></i> Priority Action Hotspots</div>
+                        </div>
+                        <div class="hotspots-table-wrapper">
+                            <table class="data-table" id="hotspotsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Location</th>
+                                        <th>Hazard</th>
+                                        <th>Passes</th>
+                                        <th>Score</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td colspan="5" class="text-center">Loading hotspots...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Status Change Modal -->
+    <div class="modal" id="statusModal">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Update Repair Workflow Status</h3>
+                    <button class="modal-close" onclick="closeStatusModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="modalHotspotId">
+                    <p id="modalHotspotInfo"></p>
+                    <div class="form-group">
+                        <label for="modalNewStatus">Select New Status:</label>
+                        <select id="modalNewStatus" class="form-select full-width">
+                            <option value="DETECTED">DETECTED (New Hazard)</option>
+                            <option value="INSPECTION_REQUESTED">INSPECTION REQUESTED (Crew Assigned)</option>
+                            <option value="REPAIR_IN_PROGRESS">REPAIR IN PROGRESS (Active Work)</option>
+                            <option value="VERIFIED">VERIFIED (Repair Complete & Inspected)</option>
+                        </select>
+                    </div>
+                    <div class="form-group mt-2">
+                        <label for="modalNotes">Action Notes / Work Order:</label>
+                        <textarea id="modalNotes" class="form-input full-width" rows="3" placeholder="e.g. Dispatched bitumen patching team, work order #PMC-2026-092"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeStatusModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="submitStatusUpdate()">Update Status</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Custom Dashboard Script -->
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
