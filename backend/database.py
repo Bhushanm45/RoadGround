@@ -347,3 +347,108 @@ def get_system_statistics(mode_filter: str = "ALL", db_path: str = DEFAULT_DB_PA
         "type_counts": type_counts,
         "mode": mode_filter
     }
+
+
+def get_recent_raw_detections(
+    limit: int = 50,
+    mode_filter: str = "ALL",
+    hazard_type: str = "ALL",
+    db_path: str = DEFAULT_DB_PATH
+) -> List[Dict[str, Any]]:
+    """Retrieves recent individual classified hazard detections with GPS telemetry."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    query = "SELECT * FROM raw_detections WHERE 1=1"
+    params = []
+
+    if mode_filter and mode_filter != "ALL":
+        query += " AND mode = ?"
+        params.append(mode_filter)
+
+    if hazard_type and hazard_type != "ALL":
+        query += " AND hazard_type = ?"
+        params.append(hazard_type)
+
+    query += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+
+    cursor.execute(query, tuple(params))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_analytics_summary(mode_filter: str = "ALL", db_path: str = DEFAULT_DB_PATH) -> Dict[str, Any]:
+    """Computes comprehensive aggregated analytics for charts and reporting."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+
+    mode_clause = ""
+    params = []
+    if mode_filter and mode_filter != "ALL":
+        mode_clause = " WHERE mode = ?"
+        params = [mode_filter]
+
+    # Total hotspots & raw detections
+    cursor.execute(f"SELECT COUNT(*) FROM hotspots{mode_clause}", tuple(params))
+    total_hotspots = cursor.fetchone()[0]
+
+    raw_clause = f" WHERE mode = '{mode_filter}'" if mode_filter != "ALL" else ""
+    cursor.execute(f"SELECT COUNT(*) FROM raw_detections{raw_clause}")
+    total_raw_detections = cursor.fetchone()[0]
+
+    # By Hazard Type
+    cursor.execute(f"SELECT hazard_type, COUNT(*) as cnt FROM hotspots{mode_clause} GROUP BY hazard_type ORDER BY cnt DESC", tuple(params))
+    by_type = {row["hazard_type"]: row["cnt"] for row in cursor.fetchall()}
+
+    # By Status
+    cursor.execute(f"SELECT status, COUNT(*) as cnt FROM hotspots{mode_clause} GROUP BY status", tuple(params))
+    by_status = {row["status"]: row["cnt"] for row in cursor.fetchall()}
+
+    # Ensure all 4 standard workflow statuses exist in dict
+    for st in ["DETECTED", "INSPECTION_REQUESTED", "REPAIR_IN_PROGRESS", "VERIFIED"]:
+        if st not in by_status:
+            by_status[st] = 0
+
+    # By Priority
+    cursor.execute(f"SELECT priority_level, COUNT(*) as cnt FROM hotspots{mode_clause} GROUP BY priority_level", tuple(params))
+    by_priority = {row["priority_level"]: row["cnt"] for row in cursor.fetchall()}
+    for pl in ["HIGH", "MEDIUM", "LOW"]:
+        if pl not in by_priority:
+            by_priority[pl] = 0
+
+    # Top Corridors / Locations
+    cursor.execute(
+        f"SELECT location_name, COUNT(*) as count, AVG(priority_score) as avg_score "
+        f"FROM hotspots{mode_clause} GROUP BY location_name ORDER BY count DESC, avg_score DESC LIMIT 8",
+        tuple(params)
+    )
+    corridors = [
+        {
+            "name": row["location_name"] or "Unnamed Corridor",
+            "count": row["count"],
+            "avg_score": round(row["avg_score"], 1) if row["avg_score"] is not None else 0
+        }
+        for row in cursor.fetchall()
+    ]
+
+    # Average confidence & severity
+    cursor.execute(f"SELECT AVG(avg_confidence), MAX(max_severity) FROM hotspots{mode_clause}", tuple(params))
+    row_avg = cursor.fetchone()
+    avg_confidence = round(row_avg[0], 3) if row_avg and row_avg[0] is not None else 0.0
+    max_severity = round(row_avg[1], 2) if row_avg and row_avg[1] is not None else 0.0
+
+    conn.close()
+
+    return {
+        "total_hotspots": total_hotspots,
+        "total_raw_detections": total_raw_detections,
+        "by_type": by_type,
+        "by_status": by_status,
+        "by_priority": by_priority,
+        "corridors": corridors,
+        "avg_confidence": avg_confidence,
+        "max_severity": max_severity,
+        "mode": mode_filter
+    }
+

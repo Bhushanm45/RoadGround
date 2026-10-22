@@ -26,6 +26,8 @@ from backend.database import (
     get_system_statistics,
     update_device_heartbeat,
     get_registered_devices,
+    get_recent_raw_detections,
+    get_analytics_summary,
     DEFAULT_DB_PATH
 )
 from backend.hotspots import process_and_aggregate_detection, validate_gps_coordinates
@@ -58,6 +60,12 @@ except Exception as e:
 
 
 @app.route("/")
+@app.route("/dashboard")
+@app.route("/map")
+@app.route("/alerts")
+@app.route("/workflow")
+@app.route("/fleet")
+@app.route("/analytics")
 def index():
     """Serves the main Pune Municipal Corporation RoadGuard Dashboard."""
     dashboard_html_path = os.path.abspath(
@@ -287,6 +295,30 @@ def get_stats():
     mode_filter = request.args.get("mode", "ALL")
     stats = get_system_statistics(mode_filter=mode_filter)
     return jsonify(stats)
+
+
+@app.route("/api/detections", methods=["GET"])
+def get_detections():
+    """Returns recent raw sensor hazard detections with GPS telemetry and mode filtering."""
+    limit = int(request.args.get("limit", 50))
+    mode_filter = request.args.get("mode", "ALL")
+    hazard_type = request.args.get("type", "ALL")
+    detections = get_recent_raw_detections(limit=limit, mode_filter=mode_filter, hazard_type=hazard_type)
+    return jsonify({
+        "count": len(detections),
+        "mode": mode_filter,
+        "type": hazard_type,
+        "detections": detections
+    })
+
+
+@app.route("/api/analytics", methods=["GET"])
+def get_analytics():
+    """Returns aggregated hazard, status, priority, and corridor analytics for charts."""
+    mode_filter = request.args.get("mode", "ALL")
+    summary = get_analytics_summary(mode_filter=mode_filter)
+    return jsonify(summary)
+
 
 
 @app.route("/api/demo/seed", methods=["POST"])

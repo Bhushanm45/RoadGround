@@ -126,3 +126,40 @@ def test_dashboard_page_load(client):
     assert res.status_code == 200
     assert b"RoadGuard AI" in res.data
     assert b"Pune Municipal Corporation" in res.data
+
+
+def test_sidebar_routes_page_load(client):
+    """Verifies that all 6 sidebar navigation routes load the dashboard HTML cleanly."""
+    routes = ["/dashboard", "/map", "/alerts", "/workflow", "/fleet", "/analytics"]
+    for route in routes:
+        res = client.get(route)
+        assert res.status_code == 200, f"Route {route} failed to load"
+        assert b"RoadGuard AI" in res.data
+
+
+def test_raw_detections_endpoint(client):
+    """Verifies the /api/detections endpoint structure and query filtering."""
+    res = client.get("/api/detections?limit=10&mode=ALL")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert "count" in data
+    assert "detections" in data
+    assert isinstance(data["detections"], list)
+
+
+def test_analytics_summary_endpoint(client):
+    """Verifies the /api/analytics endpoint calculates hazard, status, and priority distributions."""
+    # Seed data first
+    client.post("/api/demo/seed")
+    res = client.get("/api/analytics?mode=ALL")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert "total_hotspots" in data
+    assert data["total_hotspots"] >= 7
+    assert "by_type" in data
+    assert "by_status" in data
+    assert "by_priority" in data
+    assert "corridors" in data
+    assert data["by_type"].get("POTHOLE", 0) > 0
+    assert "DETECTED" in data["by_status"]
+

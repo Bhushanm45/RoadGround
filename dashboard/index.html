@@ -10,6 +10,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js for Analytics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- Custom CSS -->
     <link rel="stylesheet" href="/static/css/dashboard.css">
 </head>
@@ -65,7 +67,7 @@
 
         <div class="hw-item" id="hwGpsStatus">
             <i class="fa-solid fa-satellite hw-icon"></i>
-            <span class="hw-label">NEO-M8N / NEO-7M GPS:</span>
+            <span class="hw-label">NEO-7M / M8N GPS:</span>
             <span class="hw-value" id="hwGpsText">Waiting for fix...</span>
         </div>
 
@@ -85,12 +87,12 @@
         <!-- Sidebar Navigation -->
         <aside class="sidebar">
             <ul class="nav-menu">
-                <li class="active"><i class="fa-solid fa-gauge-high"></i> Dashboard</li>
-                <li><i class="fa-solid fa-map-location-dot"></i> Road Condition Map</li>
-                <li><i class="fa-solid fa-triangle-exclamation"></i> Hazard Alerts</li>
-                <li><i class="fa-solid fa-screwdriver-wrench"></i> Repair Workflow</li>
-                <li><i class="fa-solid fa-bus-simple"></i> PMPML Bus Fleet</li>
-                <li><i class="fa-solid fa-chart-line"></i> Analytics & Trends</li>
+                <li class="nav-item active" data-section="dashboard"><i class="fa-solid fa-gauge-high"></i> Dashboard</li>
+                <li class="nav-item" data-section="map"><i class="fa-solid fa-map-location-dot"></i> Road Condition Map</li>
+                <li class="nav-item" data-section="alerts"><i class="fa-solid fa-triangle-exclamation"></i> Hazard Alerts</li>
+                <li class="nav-item" data-section="workflow"><i class="fa-solid fa-screwdriver-wrench"></i> Repair Workflow</li>
+                <li class="nav-item" data-section="fleet"><i class="fa-solid fa-bus-simple"></i> PMPML Bus Fleet</li>
+                <li class="nav-item" data-section="analytics"><i class="fa-solid fa-chart-line"></i> Analytics & Trends</li>
             </ul>
             <div class="sidebar-footer">
                 <div class="tech-spec">
@@ -104,130 +106,464 @@
 
         <!-- Main Content Area -->
         <main class="main-content">
-            <!-- Metric KPI Summary Cards -->
-            <section class="kpi-grid">
-                <div class="kpi-card card-open">
-                    <div class="kpi-icon"><i class="fa-solid fa-circle-exclamation"></i></div>
-                    <div class="kpi-data">
-                        <span class="kpi-value" id="kpiOpenReports">--</span>
-                        <span class="kpi-label">Open Hazard Reports</span>
+
+            <!-- ================= VIEW 1: DASHBOARD ================= -->
+            <section class="page-view active" id="view-dashboard">
+                <!-- Metric KPI Summary Cards -->
+                <div class="kpi-grid">
+                    <div class="kpi-card card-open" onclick="navigateTo('alerts')" style="cursor:pointer;" title="Click to view alerts">
+                        <div class="kpi-icon"><i class="fa-solid fa-circle-exclamation"></i></div>
+                        <div class="kpi-data">
+                            <span class="kpi-value" id="kpiOpenReports">--</span>
+                            <span class="kpi-label">Open Hazard Reports</span>
+                        </div>
+                    </div>
+
+                    <div class="kpi-card card-high" onclick="navigateTo('alerts')" style="cursor:pointer;" title="Click to view high priority alerts">
+                        <div class="kpi-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                        <div class="kpi-data">
+                            <span class="kpi-value" id="kpiHighPriority">--</span>
+                            <span class="kpi-label">High Priority Hotspots</span>
+                        </div>
+                    </div>
+
+                    <div class="kpi-card card-med" onclick="navigateTo('alerts')" style="cursor:pointer;">
+                        <div class="kpi-icon"><i class="fa-solid fa-circle-info"></i></div>
+                        <div class="kpi-data">
+                            <span class="kpi-value" id="kpiMediumPriority">--</span>
+                            <span class="kpi-label">Medium Priority</span>
+                        </div>
+                    </div>
+
+                    <div class="kpi-card card-resolved" onclick="navigateTo('workflow')" style="cursor:pointer;" title="Click to view workflow">
+                        <div class="kpi-icon"><i class="fa-solid fa-circle-check"></i></div>
+                        <div class="kpi-data">
+                            <span class="kpi-value" id="kpiResolved">--</span>
+                            <span class="kpi-label">Verified & Repaired</span>
+                        </div>
+                    </div>
+
+                    <div class="kpi-card card-buses" onclick="navigateTo('fleet')" style="cursor:pointer;" title="Click to view bus fleet">
+                        <div class="kpi-icon"><i class="fa-solid fa-bus"></i></div>
+                        <div class="kpi-data">
+                            <span class="kpi-value" id="kpiActiveBuses">--</span>
+                            <span class="kpi-label">Active Bus Units</span>
+                        </div>
                     </div>
                 </div>
 
-                <div class="kpi-card card-high">
-                    <div class="kpi-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
-                    <div class="kpi-data">
-                        <span class="kpi-value" id="kpiHighPriority">--</span>
-                        <span class="kpi-label">High Priority Hotspots</span>
-                    </div>
-                </div>
+                <!-- Dashboard Split Grid -->
+                <div class="dashboard-split-grid mt-3">
+                    <!-- Left: Quick System & Workflow Shortcuts -->
+                    <div class="dash-column-left">
+                        <div class="panel-box">
+                            <div class="box-header">
+                                <div class="box-title"><i class="fa-solid fa-server"></i> System Status & AI Engine</div>
+                                <span class="hw-tag" id="dashModelBadge">Checking...</span>
+                            </div>
+                            <div class="dash-status-body">
+                                <div class="dash-stat-row">
+                                    <span class="stat-name"><i class="fa-solid fa-brain"></i> Model Classifier:</span>
+                                    <span class="stat-val" id="dashModelName">Random Forest (30 Trees)</span>
+                                </div>
+                                <div class="dash-stat-row">
+                                    <span class="stat-name"><i class="fa-solid fa-list-check"></i> Monitored Classes:</span>
+                                    <span class="stat-val" id="dashModelClasses">POTHOLE, SPEED_BREAKER, ROUGH_ROAD</span>
+                                </div>
+                                <div class="dash-stat-row">
+                                    <span class="stat-name"><i class="fa-solid fa-sliders"></i> Features Extracted:</span>
+                                    <span class="stat-val" id="dashModelFeatures">48 Statistical & Spectral Features</span>
+                                </div>
+                                <div class="dash-stat-row">
+                                    <span class="stat-name"><i class="fa-solid fa-database"></i> SQLite Storage:</span>
+                                    <span class="stat-val" id="dashDbPath">data/roadguard.db</span>
+                                </div>
+                                <div class="dash-actions-row mt-2">
+                                    <button class="btn btn-primary" onclick="navigateTo('map')">
+                                        <i class="fa-solid fa-map"></i> Open GIS Map
+                                    </button>
+                                    <button class="btn btn-secondary" onclick="navigateTo('workflow')">
+                                        <i class="fa-solid fa-screwdriver-wrench"></i> Repair Workflow
+                                    </button>
+                                    <button class="btn btn-secondary" onclick="navigateTo('analytics')">
+                                        <i class="fa-solid fa-chart-line"></i> View Trends
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
 
-                <div class="kpi-card card-med">
-                    <div class="kpi-icon"><i class="fa-solid fa-circle-info"></i></div>
-                    <div class="kpi-data">
-                        <span class="kpi-value" id="kpiMediumPriority">--</span>
-                        <span class="kpi-label">Medium Priority</span>
+                        <!-- Priority Action Hotspots -->
+                        <div class="panel-box mt-3">
+                            <div class="box-header">
+                                <div class="box-title"><i class="fa-solid fa-list-ol"></i> Priority Action Hotspots</div>
+                                <button class="btn-xs" onclick="navigateTo('alerts')">View All</button>
+                            </div>
+                            <div class="hotspots-table-wrapper">
+                                <table class="data-table" id="hotspotsTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Location</th>
+                                            <th>Hazard</th>
+                                            <th>Passes</th>
+                                            <th>Score</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr><td colspan="5" class="text-center">Loading hotspots...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
-                </div>
 
-                <div class="kpi-card card-resolved">
-                    <div class="kpi-icon"><i class="fa-solid fa-circle-check"></i></div>
-                    <div class="kpi-data">
-                        <span class="kpi-value" id="kpiResolved">--</span>
-                        <span class="kpi-label">Verified & Repaired</span>
-                    </div>
-                </div>
+                    <!-- Right: Live Alerts Stream -->
+                    <div class="dash-column-right">
+                        <div class="panel-box">
+                            <div class="box-header">
+                                <div class="box-title"><i class="fa-solid fa-bell"></i> Live Alerts Stream</div>
+                                <span class="badge-live" id="streamLiveBadge">LIVE MONITOR</span>
+                            </div>
+                            <div class="alerts-stream" id="alertsStream">
+                                <div class="empty-state">Waiting for incoming telemetry packets...</div>
+                            </div>
+                        </div>
 
-                <div class="kpi-card card-buses">
-                    <div class="kpi-icon"><i class="fa-solid fa-bus"></i></div>
-                    <div class="kpi-data">
-                        <span class="kpi-value" id="kpiActiveBuses">--</span>
-                        <span class="kpi-label">Active Bus Units</span>
+                        <div class="panel-box mt-3">
+                            <div class="box-header">
+                                <div class="box-title"><i class="fa-solid fa-map-pin"></i> GIS Map Snapshot</div>
+                                <button class="btn-xs" onclick="navigateTo('map')">Expand Full Map &rarr;</button>
+                            </div>
+                            <div class="map-snapshot-card" onclick="navigateTo('map')">
+                                <i class="fa-solid fa-map-location-dot map-preview-icon"></i>
+                                <div class="map-snapshot-info">
+                                    <strong id="dashMapCount">-- Hotspots Mapped</strong>
+                                    <span>Click to view interactive GIS coordinates, filters, and Locate Me navigation.</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
 
-            <!-- Map and Incident Feed Section -->
-            <div class="content-split">
-                <!-- Left: Interactive Map -->
-                <div class="map-container-box">
-                    <div class="box-header">
-                        <div class="box-title">
-                            <i class="fa-solid fa-map"></i> Road Condition Hotspots
-                        </div>
-                        <div class="filter-controls">
-                            <!-- Optional Locate Me Browser Button -->
-                            <button class="btn-locate" id="btnLocateMe" title="Pan map to your current location (Browser Geolocation)">
-                                <i class="fa-solid fa-crosshairs"></i> Locate Me
-                            </button>
-
-                            <label>Hazard:</label>
-                            <select id="typeFilter" class="form-select">
-                                <option value="ALL">All Types</option>
-                                <option value="POTHOLE">Potholes</option>
-                                <option value="SPEED_BREAKER">Speed Breakers</option>
-                                <option value="ROUGH_ROAD">Rough Roads</option>
-                            </select>
-
-                            <label>Status:</label>
-                            <select id="statusFilter" class="form-select">
-                                <option value="ALL">All Statuses</option>
-                                <option value="DETECTED">Detected</option>
-                                <option value="INSPECTION_REQUESTED">Inspection Requested</option>
-                                <option value="REPAIR_IN_PROGRESS">Repair In Progress</option>
-                                <option value="VERIFIED">Verified & Resolved</option>
-                            </select>
-                        </div>
-                    </div>
-                    <!-- Map Canvas -->
-                    <div id="map"></div>
-                    <div class="map-legend">
-                        <span class="legend-item"><span class="badge-dot dot-pothole"></span> Pothole</span>
-                        <span class="legend-item"><span class="badge-dot dot-bump"></span> Speed Breaker</span>
-                        <span class="legend-item"><span class="badge-dot dot-rough"></span> Rough Road</span>
-                        <span class="legend-item"><span class="badge-dot dot-verified"></span> Verified Repaired</span>
-                        <span class="legend-item"><span class="badge-dot dot-unknown"></span> Review / Unknown</span>
-                        <span class="legend-item ml-auto" style="margin-left:auto; color:#94A3B8;">
-                            <i class="fa-solid fa-info-circle"></i> Browser location is used only for view panning, not vehicle telemetry.
-                        </span>
-                    </div>
-                </div>
-
-                <!-- Right: Recent Alerts & Live Stream -->
-                <div class="side-panel">
-                    <div class="panel-box">
+            <!-- ================= VIEW 2: ROAD CONDITION MAP ================= -->
+            <section class="page-view" id="view-map">
+                <div class="map-view-wrapper">
+                    <div class="map-container-box full-map-box">
                         <div class="box-header">
-                            <div class="box-title"><i class="fa-solid fa-bell"></i> Live Alerts Stream</div>
-                            <span class="badge-live" id="streamLiveBadge">LIVE MONITOR</span>
-                        </div>
-                        <div class="alerts-stream" id="alertsStream">
-                            <div class="empty-state">Waiting for incoming telemetry packets...</div>
-                        </div>
-                    </div>
+                            <div class="box-title">
+                                <i class="fa-solid fa-map-location-dot"></i> Pune Road Condition GIS Map
+                            </div>
+                            <div class="filter-controls">
+                                <!-- Locate Me Browser Button -->
+                                <button class="btn-locate" id="btnLocateMe" title="Pan map to your current location (Browser Geolocation)">
+                                    <i class="fa-solid fa-crosshairs"></i> Locate Me
+                                </button>
+                                <button class="btn-recenter" id="btnRecenterPune" title="Recenter to Pune center">
+                                    <i class="fa-solid fa-location-crosshairs"></i> Pune Center
+                                </button>
 
-                    <div class="panel-box mt-3">
-                        <div class="box-header">
-                            <div class="box-title"><i class="fa-solid fa-list-ol"></i> Priority Action Hotspots</div>
+                                <label>Hazard:</label>
+                                <select id="typeFilter" class="form-select">
+                                    <option value="ALL">All Types</option>
+                                    <option value="POTHOLE">Potholes</option>
+                                    <option value="SPEED_BREAKER">Speed Breakers</option>
+                                    <option value="ROUGH_ROAD">Rough Roads</option>
+                                </select>
+
+                                <label>Status:</label>
+                                <select id="statusFilter" class="form-select">
+                                    <option value="ALL">All Statuses</option>
+                                    <option value="DETECTED">Detected</option>
+                                    <option value="INSPECTION_REQUESTED">Inspection Requested</option>
+                                    <option value="REPAIR_IN_PROGRESS">Repair In Progress</option>
+                                    <option value="VERIFIED">Verified & Resolved</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="hotspots-table-wrapper">
-                            <table class="data-table" id="hotspotsTable">
-                                <thead>
-                                    <tr>
-                                        <th>Location</th>
-                                        <th>Hazard</th>
-                                        <th>Passes</th>
-                                        <th>Score</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr><td colspan="5" class="text-center">Loading hotspots...</td></tr>
-                                </tbody>
-                            </table>
+
+                        <!-- Leaflet Map Canvas -->
+                        <div id="map"></div>
+
+                        <div class="map-legend">
+                            <span class="legend-item"><span class="badge-dot dot-pothole"></span> Pothole</span>
+                            <span class="legend-item"><span class="badge-dot dot-bump"></span> Speed Breaker</span>
+                            <span class="legend-item"><span class="badge-dot dot-rough"></span> Rough Road</span>
+                            <span class="legend-item"><span class="badge-dot dot-verified"></span> Verified Repaired</span>
+                            <span class="legend-item"><span class="badge-dot dot-unknown"></span> Review / Unknown</span>
+                            <span class="legend-item ml-auto" style="margin-left:auto; color:#94A3B8;">
+                                <i class="fa-solid fa-shield-halved"></i> Validated with OpenStreetMap Tiles (No Watermark)
+                            </span>
                         </div>
                     </div>
                 </div>
-            </div>
+            </section>
+
+            <!-- ================= VIEW 3: HAZARD ALERTS ================= -->
+            <section class="page-view" id="view-alerts">
+                <div class="page-header">
+                    <div>
+                        <h2><i class="fa-solid fa-triangle-exclamation"></i> Hazard Alerts & Incident Stream</h2>
+                        <p class="section-desc">Classified road hazards, GPS coordinates, vehicle passes, and severity metrics</p>
+                    </div>
+                    <div class="page-header-actions">
+                        <div class="source-toggle-pill">
+                            <button class="source-toggle-btn active" id="toggleHotspots">Aggregated Clusters</button>
+                            <button class="source-toggle-btn" id="toggleRawDetections">Raw Sensor Stream</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Alert Filters Bar -->
+                <div class="alerts-filter-bar">
+                    <div class="search-box">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" id="alertsSearchInput" placeholder="Search by road location or hazard...">
+                    </div>
+                    <div class="filter-group">
+                        <label>Hazard:</label>
+                        <select id="alertsTypeFilter" class="form-select">
+                            <option value="ALL">All Types</option>
+                            <option value="POTHOLE">Potholes</option>
+                            <option value="SPEED_BREAKER">Speed Breakers</option>
+                            <option value="ROUGH_ROAD">Rough Roads</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Priority:</label>
+                        <select id="alertsPriorityFilter" class="form-select">
+                            <option value="ALL">All Priorities</option>
+                            <option value="HIGH">High Priority</option>
+                            <option value="MEDIUM">Medium</option>
+                            <option value="LOW">Low</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Status:</label>
+                        <select id="alertsStatusFilter" class="form-select">
+                            <option value="ALL">All Statuses</option>
+                            <option value="DETECTED">Detected</option>
+                            <option value="INSPECTION_REQUESTED">Inspection Requested</option>
+                            <option value="REPAIR_IN_PROGRESS">Repair In Progress</option>
+                            <option value="VERIFIED">Verified</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" id="btnRefreshAlerts">
+                        <i class="fa-solid fa-rotate-right"></i> Refresh
+                    </button>
+                </div>
+
+                <!-- Alerts Table Container -->
+                <div class="panel-box mt-2">
+                    <div class="alerts-table-container">
+                        <table class="data-table alerts-main-table" id="alertsMainTable">
+                            <thead>
+                                <tr>
+                                    <th>Hazard Type</th>
+                                    <th>Location & GPS</th>
+                                    <th>Origin Mode</th>
+                                    <th>Passes / Hits</th>
+                                    <th>Confidence / Severity</th>
+                                    <th>Priority Score</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="alertsTableBody">
+                                <tr><td colspan="8" class="text-center">Loading alerts...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= VIEW 4: REPAIR WORKFLOW ================= -->
+            <section class="page-view" id="view-workflow">
+                <div class="page-header">
+                    <div>
+                        <h2><i class="fa-solid fa-screwdriver-wrench"></i> Municipal Repair Workflow</h2>
+                        <p class="section-desc">Track and transition road hazards through the PMC public works maintenance lifecycle</p>
+                    </div>
+                    <div class="page-header-actions">
+                        <button class="btn btn-primary" onclick="seedPuneDemoHotspots()">
+                            <i class="fa-solid fa-plus"></i> Seed Test Incidents
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Kanban Board -->
+                <div class="kanban-board">
+                    <!-- Column 1: DETECTED -->
+                    <div class="kanban-col col-detected">
+                        <div class="kanban-col-header">
+                            <div class="col-title">
+                                <span class="status-indicator dot-pothole"></span>
+                                <span>1. DETECTED</span>
+                            </div>
+                            <span class="col-count" id="countDetected">0</span>
+                        </div>
+                        <div class="kanban-cards-container" id="colCardsDetected">
+                            <div class="kanban-empty">No new hazards</div>
+                        </div>
+                    </div>
+
+                    <!-- Column 2: INSPECTION_REQUESTED -->
+                    <div class="kanban-col col-inspection">
+                        <div class="kanban-col-header">
+                            <div class="col-title">
+                                <span class="status-indicator dot-bump"></span>
+                                <span>2. INSPECTION REQUESTED</span>
+                            </div>
+                            <span class="col-count" id="countInspection">0</span>
+                        </div>
+                        <div class="kanban-cards-container" id="colCardsInspection">
+                            <div class="kanban-empty">No inspections pending</div>
+                        </div>
+                    </div>
+
+                    <!-- Column 3: REPAIR_IN_PROGRESS -->
+                    <div class="kanban-col col-repair">
+                        <div class="kanban-col-header">
+                            <div class="col-title">
+                                <span class="status-indicator dot-rough"></span>
+                                <span>3. REPAIR IN PROGRESS</span>
+                            </div>
+                            <span class="col-count" id="countRepair">0</span>
+                        </div>
+                        <div class="kanban-cards-container" id="colCardsRepair">
+                            <div class="kanban-empty">No active roadworks</div>
+                        </div>
+                    </div>
+
+                    <!-- Column 4: VERIFIED -->
+                    <div class="kanban-col col-verified">
+                        <div class="kanban-col-header">
+                            <div class="col-title">
+                                <span class="status-indicator dot-verified"></span>
+                                <span>4. VERIFIED REPAIRED</span>
+                            </div>
+                            <span class="col-count" id="countVerified">0</span>
+                        </div>
+                        <div class="kanban-cards-container" id="colCardsVerified">
+                            <div class="kanban-empty">No verified repairs yet</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= VIEW 5: PMPML BUS FLEET ================= -->
+            <section class="page-view" id="view-fleet">
+                <div class="page-header">
+                    <div>
+                        <h2><i class="fa-solid fa-bus-simple"></i> PMPML Bus Fleet & Edge Hardware</h2>
+                        <p class="section-desc">Physical ESP32 edge devices, GPS receiver health, and streaming telemetry telemetry</p>
+                    </div>
+                    <div class="page-header-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="fetchDeviceStatus(); renderFleetPage();">
+                            <i class="fa-solid fa-rotate-right"></i> Refresh Devices
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Fleet Content Container: Real devices or honest empty state -->
+                <div id="fleetContainer">
+                    <!-- Populated dynamically via JS -->
+                </div>
+            </section>
+
+            <!-- ================= VIEW 6: ANALYTICS & TRENDS ================= -->
+            <section class="page-view" id="view-analytics">
+                <div class="page-header">
+                    <div>
+                        <h2><i class="fa-solid fa-chart-line"></i> Road Quality Analytics & Trends</h2>
+                        <p class="section-desc">Statistical hazard distributions, municipal resolution velocity, and high-risk corridor rankings</p>
+                    </div>
+                    <div class="page-header-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="renderAnalyticsPage()">
+                            <i class="fa-solid fa-rotate-right"></i> Refresh Charts
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Analytics Summary KPIs -->
+                <div class="kpi-grid">
+                    <div class="kpi-card card-open">
+                        <div class="kpi-icon"><i class="fa-solid fa-road"></i></div>
+                        <div class="kpi-data">
+                            <span class="kpi-value" id="anaTotalHotspots">0</span>
+                            <span class="kpi-label">Total Road Hazards</span>
+                        </div>
+                    </div>
+                    <div class="kpi-card card-high">
+                        <div class="kpi-icon"><i class="fa-solid fa-wave-square"></i></div>
+                        <div class="kpi-data">
+                            <span class="kpi-value" id="anaRawCount">0</span>
+                            <span class="kpi-label">Raw Telemetry Samples</span>
+                        </div>
+                    </div>
+                    <div class="kpi-card card-resolved">
+                        <div class="kpi-icon"><i class="fa-solid fa-circle-check"></i></div>
+                        <div class="kpi-data">
+                            <span class="kpi-value" id="anaResolutionRate">0%</span>
+                            <span class="kpi-label">Repair Resolution Rate</span>
+                        </div>
+                    </div>
+                    <div class="kpi-card card-med">
+                        <div class="kpi-icon"><i class="fa-solid fa-bullseye"></i></div>
+                        <div class="kpi-data">
+                            <span class="kpi-value" id="anaAvgConfidence">0%</span>
+                            <span class="kpi-label">Avg Model Confidence</span>
+                        </div>
+                    </div>
+                    <div class="kpi-card card-buses">
+                        <div class="kpi-icon"><i class="fa-solid fa-gauge"></i></div>
+                        <div class="kpi-data">
+                            <span class="kpi-value" id="anaMaxSeverity">0.0g</span>
+                            <span class="kpi-label">Peak Vibration Severity</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2x2 Charts Grid -->
+                <div class="analytics-charts-grid mt-3">
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <span class="chart-title"><i class="fa-solid fa-chart-pie"></i> Hazard Distribution by Type</span>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="chartHazardType"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <span class="chart-title"><i class="fa-solid fa-bars-progress"></i> Repair Workflow Pipeline</span>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="chartWorkflowStatus"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <span class="chart-title"><i class="fa-solid fa-triangle-exclamation"></i> Hazard Priority Breakdown</span>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="chartPriority"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <span class="chart-title"><i class="fa-solid fa-route"></i> Top Corridors by Hazard Density</span>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="chartCorridors"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
         </main>
     </div>
 
