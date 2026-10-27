@@ -129,7 +129,40 @@ class RoadGuardPredictor:
         is_uncertain = max_conf < self.confidence_threshold
         effective_class = raw_pred if not is_uncertain else "UNCERTAIN"
 
-        # 4. Hazard Eligibility
+        # 4. Physical Feature Corroboration for Real-World Sensor Telemetry
+        # If the model's prediction is uncertain or missed a physical hazard,
+        # evaluate the physics of the accelerometer and gyroscope signals.
+        if self.confidence_threshold <= 1.0:
+            az_p2p = feature_dict.get("az_peak_to_peak", 0.0)
+            az_kurt = feature_dict.get("az_kurtosis", 3.0)
+            az_std = feature_dict.get("az_std", 0.0)
+            az_max = feature_dict.get("az_max", 1.0)
+            az_min = feature_dict.get("az_min", 1.0)
+            amag_std = feature_dict.get("amag_std", 0.0)
+            drop_before_rise = feature_dict.get("temporal_drop_before_rise", 0.0)
+
+            # If raw ML prediction is already a recognized hazard with solid confidence (>= 0.50), accept it
+            if raw_pred in HAZARD_CLASSES and max_conf >= 0.50:
+                effective_class = raw_pred
+                is_uncertain = False
+            elif is_uncertain or raw_pred == "NORMAL_ROAD":
+                # Check for Pothole (sharp impulsive shock: high kurtosis and high peak-to-peak)
+                if az_p2p >= 1.4 and (az_kurt >= 4.0 or az_max >= 2.0 or az_min <= 0.35):
+                    effective_class = "POTHOLE"
+                    max_conf = min(0.96, max(0.72, 0.70 + (az_p2p - 1.4) * 0.12))
+                    is_uncertain = False
+                # Check for Speed Breaker (smooth vertical elevation hump: low kurtosis, elevated max, no sharp cavity)
+                elif az_p2p >= 0.55 and az_kurt < 3.5 and az_max >= 1.35 and az_min >= 0.65:
+                    effective_class = "SPEED_BREAKER"
+                    max_conf = min(0.92, max(0.70, 0.70 + (az_max - 1.35) * 0.25))
+                    is_uncertain = False
+                # Check for Rough Road (continuous stochastic chatter: elevated std, near-normal kurtosis)
+                elif (az_std >= 0.18 or amag_std >= 0.20) and az_kurt < 4.0:
+                    effective_class = "ROUGH_ROAD"
+                    max_conf = min(0.92, max(0.68, 0.68 + (az_std - 0.18) * 0.5))
+                    is_uncertain = False
+
+        # 5. Hazard Eligibility
         is_hazard = (effective_class in HAZARD_CLASSES) and (not is_uncertain)
 
         # 5. Peak Impact / Event Strength Metric (vertical delta-g or P2P)

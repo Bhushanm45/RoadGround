@@ -777,12 +777,23 @@ async function refreshDashboard() {
 
             renderMarkers();
             renderHotspotsTable();
-            renderAlertsStream();
-
-            // Refresh specific pages if currently viewed
-            if (activeSection === "workflow") renderWorkflowBoard();
-            if (activeSection === "alerts" && alertsViewMode === "HOTSPOTS") renderAlertsPage();
         }
+
+        // 3. Fetch recent raw detections (includes unlocated hazards with no GPS fix)
+        //    These appear in the Live Alerts Stream even before a GPS hotspot is formed.
+        try {
+            const rawRes = await fetch(`/api/detections?mode=${currentMode}&limit=10`);
+            if (rawRes.ok) {
+                const rawData = await rawRes.json();
+                rawDetections = rawData.detections || [];
+            }
+        } catch (_) { /* non-fatal — stream will fall back to hotspots */ }
+
+        renderAlertsStream();
+
+        // Refresh specific pages if currently viewed
+        if (activeSection === "workflow") renderWorkflowBoard();
+        if (activeSection === "alerts" && alertsViewMode === "HOTSPOTS") renderAlertsPage();
     } catch (err) {
         console.warn("Polling update error:", err);
     }
@@ -932,23 +943,55 @@ function renderAlertsStream() {
     const container = document.getElementById("alertsStream");
     if (!container) return;
 
-    if (activeHotspots.length === 0) {
+    // Prefer confirmed GPS hotspots; fall back to recent raw detections (no GPS fix yet)
+    if (activeHotspots.length > 0) {
+        container.innerHTML = activeHotspots.slice(0, 6).map(h => `
+            <div class="alert-item ${h.hazard_type.toLowerCase()}">
+                <div>
+                    <div class="alert-title">
+                        ${h.hazard_type}: ${h.location_name || "Road Obstacle"}
+                        <span style="font-size:9px; color:${h.mode==='HARDWARE'?'#34D399':'#FBBF24'}; margin-left:4px;">[${h.mode}]</span>
+                    </div>
+                    <div class="alert-subtitle">${h.distinct_rides} independent buses • ${h.observation_count} detections</div>
+                </div>
+                <span class="alert-badge badge-${h.priority_level.toLowerCase()}">${h.priority_level}</span>
+            </div>
+        `).join("");
+        return;
+    }
+
+    // No hotspots yet — show raw hardware detections (GPS unavailable phase)
+    const recentHazards = rawDetections.filter(d => d.mode === currentMode);
+    if (recentHazards.length === 0) {
         container.innerHTML = `<div class="empty-state">No hazard alerts currently flagged for ${currentMode.toLowerCase()} mode.</div>`;
         return;
     }
 
-    container.innerHTML = activeHotspots.slice(0, 6).map(h => `
-        <div class="alert-item ${h.hazard_type.toLowerCase()}">
-            <div>
-                <div class="alert-title">
-                    ${h.hazard_type}: ${h.location_name || "Road Obstacle"}
-                    <span style="font-size:9px; color:${h.mode==='HARDWARE'?'#34D399':'#FBBF24'}; margin-left:4px;">[${h.mode}]</span>
+    container.innerHTML = recentHazards.slice(0, 6).map(d => {
+        const hazardColor = d.hazard_type === "POTHOLE" ? "#EF4444"
+                          : d.hazard_type === "SPEED_BREAKER" ? "#F59E0B"
+                          : "#38BDF8";
+        const ts = d.created_at
+            ? new Date(d.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+            : "--";
+        const location = (d.gps_valid && d.latitude && d.longitude)
+            ? `📍 ${parseFloat(d.latitude).toFixed(5)}, ${parseFloat(d.longitude).toFixed(5)}`
+            : "📡 No GPS Fix";
+        const confPct = d.confidence ? Math.round(d.confidence * 100) + "% conf" : "";
+        const severity = d.severity_metric ? ` • ${parseFloat(d.severity_metric).toFixed(2)}g` : "";
+        return `
+            <div class="alert-item ${d.hazard_type.toLowerCase()}">
+                <div>
+                    <div class="alert-title" style="color:${hazardColor};">
+                        ${d.hazard_type}
+                        <span style="font-size:9px; color:#34D399; margin-left:4px;">[HARDWARE · LIVE]</span>
+                    </div>
+                    <div class="alert-subtitle">${location} · ${ts} ${confPct}${severity}</div>
                 </div>
-                <div class="alert-subtitle">${h.distinct_rides} independent buses • ${h.observation_count} detections</div>
+                <span class="alert-badge badge-high" style="background:#1E293B; color:#94A3B8; border:1px solid #334155;">RAW</span>
             </div>
-            <span class="alert-badge badge-${h.priority_level.toLowerCase()}">${h.priority_level}</span>
-        </div>
-    `).join("");
+        `;
+    }).join("");
 }
 
 /**
