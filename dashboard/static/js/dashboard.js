@@ -15,6 +15,11 @@
 let map = null;
 let markersLayer = null;
 let userLocationLayer = null;
+let hardwareLocationLayer = null;
+let hardwareLocationMarker = null;
+let latestHardwareDevice = null;
+let hasAutoCenteredHardware = false;
+
 let activeHotspots = [];
 let rawDetections = [];
 let pollingInterval = null;
@@ -42,10 +47,14 @@ document.addEventListener("DOMContentLoaded", () => {
     initEventListeners();
     fetchModelStatus();
     fetchDeviceStatus();
+    fetchNetworkInfo();
     refreshDashboard();
 
     // Fast polling for device connection heartbeat (every 2s)
     devicePollingInterval = setInterval(fetchDeviceStatus, 2000);
+
+    // Refresh network info every 30s (IP can change when hotspot reconnects)
+    setInterval(fetchNetworkInfo, 30000);
 
     // Main polling for hotspots and KPI metrics (every 3s)
     pollingInterval = setInterval(refreshDashboard, 3000);
@@ -154,6 +163,7 @@ function initMap() {
 
     markersLayer = L.layerGroup().addTo(map);
     userLocationLayer = L.layerGroup().addTo(map);
+    hardwareLocationLayer = L.layerGroup().addTo(map);
 }
 
 /**
@@ -162,6 +172,30 @@ function initMap() {
 function recenterPuneMap() {
     if (map) {
         map.flyTo([18.5204, 73.8567], 12.5, { duration: 1.0 });
+    }
+}
+
+/**
+ * Center Map on Physical ESP32 Hardware GPS Location
+ */
+function centerOnHardwareGps() {
+    if (!latestHardwareDevice) {
+        alert("No physical ESP32 hardware device is connected yet. Waiting for telemetry packets at /api/telemetry.");
+        return;
+    }
+
+    if (latestHardwareDevice.latitude === null || latestHardwareDevice.longitude === null) {
+        alert("ESP32 hardware is connected, but the NEO-6M GPS receiver is still searching for satellites. Take the antenna outdoors or near an open window to acquire 3D satellite lock.");
+        return;
+    }
+
+    const lat = Number(latestHardwareDevice.latitude);
+    const lon = Number(latestHardwareDevice.longitude);
+    if (map) {
+        map.flyTo([lat, lon], 15, { duration: 1.0 });
+        if (hardwareLocationMarker) {
+            hardwareLocationMarker.openPopup();
+        }
     }
 }
 
@@ -191,6 +225,7 @@ function initEventListeners() {
                 badge.style.borderColor = "rgba(56, 189, 248, 0.3)";
             }
             refreshDashboard();
+            fetchDeviceStatus();
             if (activeSection === "analytics") renderAnalyticsPage();
             if (activeSection === "alerts") renderAlertsPage();
             if (activeSection === "workflow") renderWorkflowBoard();
@@ -215,7 +250,13 @@ function initEventListeners() {
         });
     }
 
-    // Locate Me (Browser Geolocation)
+    // Center on Hardware GPS Location
+    const btnCenterHw = document.getElementById("btnCenterHardwareGps");
+    if (btnCenterHw) {
+        btnCenterHw.addEventListener("click", centerOnHardwareGps);
+    }
+
+    // Locate Me (Browser Geolocation - Strictly Separated from Hardware GPS)
     const btnLocate = document.getElementById("btnLocateMe");
     if (btnLocate) {
         btnLocate.addEventListener("click", handleBrowserLocateMe);
@@ -225,6 +266,12 @@ function initEventListeners() {
     const btnRecenter = document.getElementById("btnRecenterPune");
     if (btnRecenter) {
         btnRecenter.addEventListener("click", recenterPuneMap);
+    }
+
+    // Test Ping Hardware Link Trigger
+    const btnTestPing = document.getElementById("btnTestHwPing");
+    if (btnTestPing) {
+        btnTestPing.addEventListener("click", handleTestPingLink);
     }
 
     // Simulation Trigger
@@ -276,6 +323,8 @@ function initEventListeners() {
  * -------------------------------------------------------------
  * 4. Browser Geolocation ("Locate Me")
  * -------------------------------------------------------------
+ * Strictly separated from physical vehicle GPS. Used only for
+ * centering the map on the user's laptop/phone view.
  */
 function handleBrowserLocateMe() {
     if (!navigator.geolocation) {
@@ -307,10 +356,10 @@ function handleBrowserLocateMe() {
             const marker = L.marker([userLat, userLon], { icon: userIcon });
             marker.bindPopup(`
                 <div style="font-family:Inter,sans-serif; font-size:12px;">
-                    <strong>Your Browser Location</strong><br>
+                    <strong>Laptop / Phone Browser Location</strong><br>
                     📍 ${userLat.toFixed(5)}, ${userLon.toFixed(5)}<br>
                     <span style="color:#64748B; font-size:11px;">Accuracy: ±${Math.round(accuracy)}m</span><br>
-                    <em style="color:#0284C7; font-size:10px;">(Used for map navigation only)</em>
+                    <em style="color:#0284C7; font-size:10px;">(Used for local view navigation only; NOT vehicle GPS)</em>
                 </div>
             `);
             if (userLocationLayer) {
@@ -333,24 +382,24 @@ function handleBrowserLocateMe() {
 
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="fa-solid fa-crosshairs"></i> Located';
+                btn.innerHTML = '<i class="fa-solid fa-laptop"></i> Located';
                 setTimeout(() => {
-                    btn.innerHTML = '<i class="fa-solid fa-crosshairs"></i> Locate Me';
+                    btn.innerHTML = '<i class="fa-solid fa-laptop"></i> Browser Location';
                 }, 3000);
             }
         },
         (error) => {
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="fa-solid fa-crosshairs"></i> Locate Me';
+                btn.innerHTML = '<i class="fa-solid fa-laptop"></i> Browser Location';
             }
             let msg = "Could not obtain browser location.";
             if (error.code === error.PERMISSION_DENIED) {
-                msg = "Location permission was denied. To use 'Locate Me', allow location access in your browser settings.";
+                msg = "Browser location permission was denied. (Note: Vehicle detection relies on ESP32 physical GPS, not browser location).";
             } else if (error.code === error.POSITION_UNAVAILABLE) {
-                msg = "Location information is currently unavailable.";
+                msg = "Browser location information is currently unavailable.";
             } else if (error.code === error.TIMEOUT) {
-                msg = "Location request timed out.";
+                msg = "Browser location request timed out.";
             }
             alert(msg);
         },
@@ -359,8 +408,67 @@ function handleBrowserLocateMe() {
 }
 
 /**
+ * Triggers an immediate hardware heartbeat packet to verify the website connection & green dot.
+ */
+async function handleTestPingLink() {
+    const btn = document.getElementById("btnTestHwPing");
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Pinging...';
+    }
+
+    try {
+        const payload = {
+            device_id: "ESP32_BUS_01",
+            mode: "HARDWARE",
+            seq_num: Math.floor(Date.now() / 1000) % 100000,
+            firmware_version: "1.3.1",
+            gps: {
+                latitude: null,
+                longitude: null,
+                speed_kmh: 0.0,
+                fix_valid: false,
+                satellites: 0,
+                hdop: 99.0,
+                timestamp_ms: Date.now()
+            },
+            edge_event: {
+                impact_detected: false,
+                max_shock_g: 0.0
+            },
+            samples: Array.from({ length: 20 }, (_, i) => ({
+                t: Date.now() + i * 10,
+                ax: 0.01,
+                ay: -0.01,
+                az: 1.0,
+                gx: 0.0,
+                gy: 0.0,
+                gz: 0.0
+            }))
+        };
+
+        const res = await fetch("/api/telemetry", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+            await fetchDeviceStatus();
+        }
+    } catch (e) {
+        console.error("Test ping failed:", e);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-bolt"></i> Ping Test Link';
+        }
+    }
+}
+
+/**
  * -------------------------------------------------------------
- * 5. Device Heartbeat & Model Status Polling
+ * 5. Device Heartbeat & Hardware GPS Marker Polling
  * -------------------------------------------------------------
  */
 async function fetchDeviceStatus() {
@@ -373,29 +481,98 @@ async function fetchDeviceStatus() {
             const devDot = document.getElementById("hwDeviceDot");
             const devText = document.getElementById("hwDeviceText");
             const gpsText = document.getElementById("hwGpsText");
+            const telText = document.getElementById("hwLastTelemetryText");
+            const mapBanner = document.getElementById("hwGpsMapBanner");
+            const mapBannerText = document.getElementById("hwGpsBannerText");
 
-            if (devices.length > 0) {
-                const latest = devices[0];
+            // Filter for primary hardware device matching mode if possible
+            let relevantDevices = devices;
+            if (currentMode === "HARDWARE") {
+                relevantDevices = devices.filter(d => d.mode !== "SIMULATION");
+            } else if (currentMode === "SIMULATION") {
+                relevantDevices = devices.filter(d => d.mode === "SIMULATION");
+            }
+
+            if (relevantDevices.length > 0) {
+                // Prioritize an actively transmitting ONLINE device, then physical hardware unit ESP32_BUS_01
+                const activeOnline = relevantDevices.find(d => d.status === "ONLINE");
+                const busUnit = relevantDevices.find(d => d.device_id === "ESP32_BUS_01");
+                const latest = activeOnline || busUnit || relevantDevices[0];
+                latestHardwareDevice = latest;
+
                 if (latest.status === "ONLINE") {
                     if (devDot) devDot.className = "hw-indicator dot-online";
-                    if (devText) devText.textContent = `${latest.device_id} (Online • ${latest.ip_address || "LAN"} • seen ${latest.seconds_since_seen}s ago)`;
-                    
-                    if (gpsText) {
-                        if (latest.gps_fix) {
-                            gpsText.innerHTML = `<span style="color:#10B981;">3D Fix (${latest.satellites} Sats • HDOP ${latest.hdop})</span>`;
+                    if (devText) devText.innerHTML = `<strong>${latest.device_id}</strong> <span style="color:#10B981;">(Online • ${latest.ip_address || "LAN"})</span>`;
+                    if (telText) telText.textContent = `${latest.seconds_since_seen}s ago (Seq #${latest.last_seq_num || 0})`;
+
+                    const hasGpsCoords = (latest.latitude !== null && latest.longitude !== null);
+
+                    if (latest.gps_fix && hasGpsCoords) {
+                        if (gpsText) {
+                            gpsText.innerHTML = `<span style="color:#10B981;"><i class="fa-solid fa-satellite"></i> 3D Fix (${latest.satellites} Sats • HDOP ${latest.hdop})</span>`;
+                        }
+                        if (mapBanner) mapBanner.classList.remove("visible");
+                        updateHardwareMapMarker(latest, false);
+                    } else {
+                        // Searching for satellites / invalid fix
+                        if (gpsText) {
+                            gpsText.innerHTML = `<span style="color:#F59E0B;"><i class="fa-solid fa-satellite-dish fa-spin"></i> Searching (${latest.satellites || 0} Sats in view)</span>`;
+                        }
+                        if (mapBanner) {
+                            mapBanner.classList.add("visible");
+                            if (mapBannerText) {
+                                mapBannerText.innerHTML = `Waiting for physical ESP32 GPS fix... (NEO-6M searching: ${latest.satellites || 0} satellites visible, HDOP ${latest.hdop || 1.0})`;
+                            }
+                        }
+                        // If a previous known fix exists, show as stale
+                        if (hasGpsCoords) {
+                            updateHardwareMapMarker(latest, true);
                         } else {
-                            gpsText.innerHTML = `<span style="color:#F59E0B;">Acquiring Satellites (${latest.satellites} Sats)</span>`;
+                            if (hardwareLocationMarker && hardwareLocationLayer) {
+                                hardwareLocationLayer.clearLayers();
+                                hardwareLocationMarker = null;
+                            }
                         }
                     }
                 } else {
+                    // Device is OFFLINE
                     if (devDot) devDot.className = "hw-indicator dot-offline";
-                    if (devText) devText.textContent = `${latest.device_id} (Offline • last seen ${latest.seconds_since_seen}s ago)`;
-                    if (gpsText) gpsText.innerHTML = '<span style="color:#94A3B8;">GPS Inactive</span>';
+                    if (devText) devText.innerHTML = `<strong>${latest.device_id}</strong> (Offline • last seen ${latest.seconds_since_seen}s ago)`;
+                    if (gpsText) gpsText.innerHTML = '<span style="color:#94A3B8;">GPS Inactive (Offline)</span>';
+                    if (telText) telText.textContent = `Offline (${latest.seconds_since_seen}s ago)`;
+
+                    if (mapBanner) {
+                        mapBanner.classList.add("visible");
+                        if (mapBannerText) {
+                            mapBannerText.innerHTML = `ESP32 Hardware Disconnected (${latest.device_id} is offline. Last seen ${latest.seconds_since_seen}s ago)`;
+                        }
+                    }
+                    if (latest.latitude !== null && latest.longitude !== null) {
+                        updateHardwareMapMarker(latest, true);
+                    } else if (hardwareLocationMarker && hardwareLocationLayer) {
+                        hardwareLocationLayer.clearLayers();
+                        hardwareLocationMarker = null;
+                    }
                 }
             } else {
+                latestHardwareDevice = null;
                 if (devDot) devDot.className = "hw-indicator dot-offline";
-                if (devText) devText.textContent = "No ESP32 connected (Waiting for /api/telemetry)";
+                if (devText) devText.textContent = currentMode === "HARDWARE" 
+                    ? "No ESP32 connected (Waiting for /api/telemetry)" 
+                    : "No simulator connected";
                 if (gpsText) gpsText.innerHTML = '<span style="color:#94A3B8;">GPS Inactive</span>';
+                if (telText) telText.textContent = "Waiting for packets...";
+
+                if (mapBanner) {
+                    mapBanner.classList.add("visible");
+                    if (mapBannerText) {
+                        mapBannerText.innerHTML = `No physical ESP32 transmitting. Connect hardware to stream real NEO-6M GPS coordinates.`;
+                    }
+                }
+                if (hardwareLocationMarker && hardwareLocationLayer) {
+                    hardwareLocationLayer.clearLayers();
+                    hardwareLocationMarker = null;
+                }
             }
         }
     } catch (e) {
@@ -404,8 +581,136 @@ async function fetchDeviceStatus() {
     }
 }
 
-async function fetchModelStatus() {
+/**
+ * Updates the distinct vehicle hardware GPS marker on the map
+ */
+function updateHardwareMapMarker(deviceData, isStale = false) {
+    if (!map || !hardwareLocationLayer) return;
+    if (deviceData.latitude === null || deviceData.longitude === null) return;
+
+    const lat = Number(deviceData.latitude);
+    const lon = Number(deviceData.longitude);
+    if (isNaN(lat) || isNaN(lon) || (Math.abs(lat) < 0.001 && Math.abs(lon) < 0.001)) {
+        return; // Strictly reject (0, 0) Null Island
+    }
+
+    const actuallyStale = isStale || deviceData.is_stale || (deviceData.status === "OFFLINE");
+    const markerClass = actuallyStale ? "hw-vehicle-marker hw-vehicle-stale" : "hw-vehicle-marker";
+
+    const customIcon = L.divIcon({
+        className: markerClass,
+        html: `
+            <div class="hw-vehicle-pulse"></div>
+            <div class="hw-vehicle-body">
+                <i class="fa-solid fa-bus"></i>
+            </div>
+        `,
+        iconSize: [36, 36],
+        iconAnchor: [18, 18]
+    });
+
+    const statusBadge = actuallyStale
+        ? '<span style="background:rgba(245,158,11,0.25); color:#F59E0B; padding:2px 6px; border-radius:3px; font-weight:700; font-size:10px;">STALE (LAST KNOWN FIX)</span>'
+        : '<span style="background:rgba(16,185,129,0.25); color:#10B981; padding:2px 6px; border-radius:3px; font-weight:700; font-size:10px;">LIVE 3D GPS FIX</span>';
+
+    const originModeTag = (deviceData.mode === "HARDWARE")
+        ? '<span style="color:#34D399; font-weight:700; font-size:10px;">REAL HARDWARE</span>'
+        : '<span style="color:#FBBF24; font-weight:700; font-size:10px;">SIMULATED TELEMETRY</span>';
+
+    const popupHtml = `
+        <div style="font-family:Inter,sans-serif; min-width:230px;">
+            <div style="font-weight:700; font-size:13px; color:#0F172A; display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span><i class="fa-solid fa-bus"></i> ${deviceData.device_id}</span>
+                ${statusBadge}
+            </div>
+            <div style="font-size:11px; color:#475569; margin-bottom:6px;">
+                📍 ${lat.toFixed(6)}, ${lon.toFixed(6)} [${originModeTag}]
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:11px; margin-bottom:6px;">
+                <div><strong>Satellites:</strong> ${deviceData.satellites || 0}</div>
+                <div><strong>HDOP:</strong> ${deviceData.hdop || 1.0}</div>
+                <div><strong>Accuracy:</strong> ±${deviceData.estimated_accuracy_m || 5.0}m</div>
+                <div><strong>Speed:</strong> ${deviceData.speed_kmh || 0.0} km/h</div>
+            </div>
+            <div style="font-size:10px; color:#64748B; border-top:1px solid #CBD5E1; padding-top:4px;">
+                <em>Physical GPS Source • Last updated ${deviceData.seconds_since_seen || 0}s ago</em>
+            </div>
+        </div>
+    `;
+
+    if (hardwareLocationMarker) {
+        hardwareLocationMarker.setLatLng([lat, lon]);
+        hardwareLocationMarker.setIcon(customIcon);
+        hardwareLocationMarker.setPopupContent(popupHtml);
+    } else {
+        hardwareLocationMarker = L.marker([lat, lon], { icon: customIcon, zIndexOffset: 1000 });
+        hardwareLocationMarker.bindPopup(popupHtml);
+        hardwareLocationLayer.addLayer(hardwareLocationMarker);
+    }
+
+    // Auto-center map on first valid physical fix
+    if (!hasAutoCenteredHardware && !actuallyStale && activeSection === "map") {
+        map.flyTo([lat, lon], 14, { duration: 1.2 });
+        hasAutoCenteredHardware = true;
+    }
+}
+
+/**
+ * Fetches the current laptop LAN IP from /api/network-info and updates
+ * the connection diagnostics panel so the user can immediately copy
+ * the correct BACKEND_URL into firmware/secrets.h.
+ */
+async function fetchNetworkInfo() {
     try {
+        const res = await fetch("/api/network-info");
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const lanIp = data.laptop_lan_ip || "Unknown";
+        const backendUrl = data.backend_url || "N/A";
+
+        // Update diagnostics panel
+        const elIp = document.getElementById("diagLanIp");
+        const elUrl = document.getElementById("diagBackendUrl");
+        const elBadge = document.getElementById("diagStatusBadge");
+        const elWarn = document.getElementById("ipChangedWarning");
+
+        if (elIp) elIp.textContent = lanIp;
+        if (elUrl) elUrl.textContent = backendUrl;
+
+        // Known previous IPs that may be stale in secrets.h
+        const knownStaleIps = ["10.131.244.214"];
+        const isIpPotentiallyStale = knownStaleIps.some(ip => !backendUrl.includes(lanIp));
+        if (elWarn) {
+            // Show warning only if this isn't localhost and we detect mismatch hint
+            if (lanIp !== "127.0.0.1" && isIpPotentiallyStale) {
+                elWarn.style.display = "block";
+                elWarn.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i>
+                    <strong>Update secrets.h!</strong> Current laptop IP is <code>${lanIp}</code>.<br>
+                    Set <code>BACKEND_URL = "${backendUrl}"</code> in <code>firmware/esp32_roadguard/secrets.h</code> and re-flash.`;
+            } else {
+                elWarn.style.display = "none";
+            }
+        }
+        if (elBadge) {
+            if (lanIp !== "127.0.0.1") {
+                elBadge.textContent = "BACKEND REACHABLE";
+                elBadge.style.color = "#34D399";
+                elBadge.style.borderColor = "rgba(52,211,153,0.4)";
+            }
+        }
+    } catch (e) {
+        // Backend not running — don't crash, just leave stale values
+        const elBadge = document.getElementById("diagStatusBadge");
+        if (elBadge) {
+            elBadge.textContent = "BACKEND OFFLINE";
+            elBadge.style.color = "#F87171";
+            elBadge.style.borderColor = "rgba(239,68,68,0.4)";
+        }
+    }
+}
+
+async function fetchModelStatus() {    try {
         const res = await fetch("/api/model-status");
         if (res.ok) {
             const data = await res.json();
@@ -547,6 +852,8 @@ function renderMarkers() {
     activeHotspots.forEach(h => {
         if (statusFilter !== "ALL" && h.status !== statusFilter) return;
         if (typeFilter !== "ALL" && h.hazard_type !== typeFilter) return;
+        if (currentMode !== "ALL" && h.mode !== currentMode) return;
+        if (h.latitude === null || h.longitude === null) return; // Strict coordinate check
 
         const icon = getMarkerIcon(h.hazard_type, h.priority_level, h.status, h.mode);
         const marker = L.marker([h.latitude, h.longitude], { icon: icon });

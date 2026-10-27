@@ -111,14 +111,24 @@ For each window, `ml/preprocess.py` extracts **23 canonical mathematical feature
 
 ---
 
-## 8. How GPS Coordinates Reach the Map
+## 8. How Physical Hardware GPS Reaches the Map
 
-1. The NEO-6M satellite receiver provides latitude and longitude.
-2. When the backend receives a telemetry batch, it associates the latest valid GPS fix with the incoming sensor samples.
-3. Once the ML model classifies an eligible hazard (`POTHOLE`, `SPEED_BREAKER`, or `ROUGH_ROAD`) with confidence $\ge 0.65$:
-   - The raw detection is stored in SQLite.
-   - The spatial aggregator updates or creates a map hotspot.
-   - The Leaflet.js dashboard polls `/api/hotspots` every 3 seconds and dynamically renders colored markers at the exact coordinates.
+1. **Hardware GPS as Authoritative Primary Location:**
+   - The NEO-6M / NEO-7M / NEO-M8N satellite receiver transmits real NMEA sentences to ESP32 HardwareSerial2 (`RX2 = GPIO 16`, `TX2 = GPIO 17`).
+   - The firmware extracts latitude, longitude, fix validity, satellite count, and HDOP accuracy.
+   - When satellite lock is searching or invalid, coordinates are strictly **not published** (`fix_valid = false`, `latitude = null`, `longitude = null`), preventing false markers at `(0, 0)` Null Island.
+2. **Real-Time Vehicle Position Tracking:**
+   - The Road Condition Map renders a distinct glowing vehicle marker representing the ESP32 transit bus at its live physical GPS position.
+   - A dedicated popup shows coordinates, satellite count, HDOP, speed, and telemetry latency.
+   - If satellite lock is temporarily interrupted, the system displays *"Waiting for hardware GPS fix"* and retains the last known position as **stale**, rather than silently falling back to laptop/phone coordinates.
+3. **Hazard Event Geocoding:**
+   - When the ML model classifies a road impact (`POTHOLE`, `SPEED_BREAKER`, or `ROUGH_ROAD`) with confidence $\ge 0.65$:
+     - If the vehicle has an active 3D GPS fix, the event is geotagged and pinned at the exact capture coordinates where the pothole occurred.
+     - Historical hazard markers remain stationary at their captured coordinates as the vehicle moves.
+     - If no valid GPS fix is active at impact time, the event is quarantined in SQLite as `UNLOCATED_NO_GPS` without plotting false map pins.
+4. **Isolated Browser Geolocation:**
+   - The map includes a dedicated "Browser Location" button that locates the user's laptop or mobile phone.
+   - Browser location is strictly isolated from hardware telemetry and vehicle pothole tracking.
 
 ---
 

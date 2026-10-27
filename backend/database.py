@@ -115,6 +115,13 @@ def init_db(db_path: str = DEFAULT_DB_PATH):
     )
     """)
 
+    _ensure_column_exists(cursor, "devices", "latitude", "REAL")
+    _ensure_column_exists(cursor, "devices", "longitude", "REAL")
+    _ensure_column_exists(cursor, "devices", "speed_kmh", "REAL DEFAULT 0.0")
+    _ensure_column_exists(cursor, "devices", "last_gps_fix_at", "TEXT")
+    _ensure_column_exists(cursor, "devices", "is_stale", "INTEGER DEFAULT 0")
+    _ensure_column_exists(cursor, "devices", "mode", "TEXT DEFAULT 'HARDWARE'")
+
     # Indexes for fast spatial, status, and mode querying
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_status ON hotspots(status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_type ON hotspots(hazard_type)")
@@ -178,15 +185,32 @@ def update_device_heartbeat(
     hdop: float = 1.0,
     seq_num: int = 0,
     firmware_version: str = "1.0.0",
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    speed_kmh: float = 0.0,
+    is_stale: bool = False,
+    mode: str = "HARDWARE",
     db_path: str = DEFAULT_DB_PATH
 ):
     """Updates device presence and GPS telemetry health in the database."""
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
     now_iso = datetime.now().isoformat()
+
+    # Query existing device to retain last known valid fix if current fix is searching
+    cursor.execute("SELECT latitude, longitude, last_gps_fix_at FROM devices WHERE device_id = ?", (device_id,))
+    existing = cursor.fetchone()
+
+    final_lat = latitude if gps_fix and latitude is not None else (existing["latitude"] if existing else None)
+    final_lon = longitude if gps_fix and longitude is not None else (existing["longitude"] if existing else None)
+    final_gps_fix_at = now_iso if (gps_fix and latitude is not None) else (existing["last_gps_fix_at"] if existing else None)
+
     cursor.execute("""
-        INSERT INTO devices (device_id, last_seen, ip_address, status, gps_fix, satellites, hdop, last_seq_num, firmware_version)
-        VALUES (?, ?, ?, 'ONLINE', ?, ?, ?, ?, ?)
+        INSERT INTO devices (
+            device_id, last_seen, ip_address, status, gps_fix, satellites, hdop, 
+            last_seq_num, firmware_version, latitude, longitude, speed_kmh, last_gps_fix_at, is_stale, mode
+        )
+        VALUES (?, ?, ?, 'ONLINE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(device_id) DO UPDATE SET
             last_seen = excluded.last_seen,
             ip_address = excluded.ip_address,
@@ -195,14 +219,24 @@ def update_device_heartbeat(
             satellites = excluded.satellites,
             hdop = excluded.hdop,
             last_seq_num = excluded.last_seq_num,
-            firmware_version = excluded.firmware_version
-    """, (device_id, now_iso, ip_address, 1 if gps_fix else 0, satellites, hdop, seq_num, firmware_version))
+            firmware_version = excluded.firmware_version,
+            latitude = excluded.latitude,
+            longitude = excluded.longitude,
+            speed_kmh = excluded.speed_kmh,
+            last_gps_fix_at = excluded.last_gps_fix_at,
+            is_stale = excluded.is_stale,
+            mode = excluded.mode
+    """, (
+        device_id, now_iso, ip_address, 1 if gps_fix else 0, satellites, hdop,
+        seq_num, firmware_version, final_lat, final_lon, speed_kmh, final_gps_fix_at,
+        1 if is_stale else 0, mode
+    ))
     conn.commit()
     conn.close()
 
 
-def get_registered_devices(db_path: str = DEFAULT_DB_PATH, offline_timeout_seconds: float = 6.0) -> List[Dict[str, Any]]:
-    """Retrieves all registered devices and dynamically calculates online/offline status."""
+def get_registered_devices(db_path: str = DEFAULT_DB_PATH, offline_timeout_seconds: float = 12.0) -> List[Dict[str, Any]]:
+    """Retrieves all registered devices and dynamically calculates online/offline and GPS freshness status."""
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM devices ORDER BY last_seen DESC")
@@ -221,7 +255,29 @@ def get_registered_devices(db_path: str = DEFAULT_DB_PATH, offline_timeout_secon
         except Exception:
             d["seconds_since_seen"] = 999.0
             d["status"] = "OFFLINE"
+
+        # Calculate time since last valid GPS fix
+        if d.get("last_gps_fix_at"):
+            try:
+                gps_dt = datetime.fromisoformat(d["last_gps_fix_at"])
+                gps_elapsed = (now - gps_dt).total_seconds()
+                d["seconds_since_gps_fix"] = round(gps_elapsed, 1)
+                # If GPS fix is older than 10s or device is offline, mark as stale
+                if gps_elapsed > 10.0 or d["status"] == "OFFLINE":
+                    d["is_stale"] = 1
+            except Exception:
+                d["seconds_since_gps_fix"] = None
+        else:
+            d["seconds_since_gps_fix"] = None
+
+        # Calculate estimated accuracy from HDOP (~5m per HDOP unit)
+        hdop = d.get("hdop") or 1.0
+        d["estimated_accuracy_m"] = round(float(hdop) * 5.0, 1)
+
         results.append(d)
+
+    # Sort: ONLINE devices first, then newest last_seen
+    results.sort(key=lambda x: (1 if x.get("status") == "ONLINE" else 0, x.get("last_seen", "")), reverse=True)
     return results
 
 

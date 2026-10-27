@@ -37,6 +37,8 @@ data/*.db
 # Environment variables & secrets
 .env
 .venv
+secrets.h
+firmware/**/secrets.h
 
 # IDE & OS
 .vscode/

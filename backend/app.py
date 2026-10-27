@@ -9,10 +9,22 @@ import os
 import sys
 import collections
 import logging
+import socket
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import numpy as np
+
+def get_laptop_lan_ip() -> str:
+    """Detects the primary LAN/Wi-Fi IPv4 address of this machine for ESP32 connectivity."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -121,10 +133,66 @@ def model_status():
 @app.route("/api/device-status", methods=["GET"])
 def device_status():
     """Returns connected ESP32 hardware units and their live connection/GPS status."""
-    devices = get_registered_devices(offline_timeout_seconds=6.0)
+    devices = get_registered_devices(offline_timeout_seconds=350.0)
     return jsonify({
         "count": len(devices),
         "devices": devices
+    })
+
+
+@app.route("/api/network-info", methods=["GET"])
+def network_info():
+    """Returns the host machine's LAN IP and recommended ESP32 endpoint URL."""
+    lan_ip = get_laptop_lan_ip()
+    port = int(os.environ.get("PORT", 5000))
+    return jsonify({
+        "laptop_lan_ip": lan_ip,
+        "port": port,
+        "backend_url": f"http://{lan_ip}:{port}/api/telemetry",
+        "instructions": f"Set BACKEND_URL = \"http://{lan_ip}:{port}/api/telemetry\" in firmware/esp32_roadguard/secrets.h"
+    })
+
+
+@app.route("/api/hardware-position", methods=["GET"])
+def hardware_position():
+    """Returns the latest valid hardware GPS location, fix status, and staleness."""
+    mode_filter = request.args.get("mode", "HARDWARE")
+    devices = get_registered_devices(offline_timeout_seconds=350.0)
+
+    # Filter by mode if specified (or default to HARDWARE)
+    filtered = [d for d in devices if (mode_filter == "ALL" or d.get("mode", "HARDWARE") == mode_filter)]
+    if not filtered:
+        return jsonify({
+            "connected": False,
+            "status": "NO_HARDWARE_CONNECTED",
+            "message": "No ESP32 hardware device is currently transmitting.",
+            "position": None
+        })
+
+    # Prioritize online devices first
+    online_devices = [d for d in filtered if d.get("status") == "ONLINE"]
+    primary = online_devices[0] if online_devices else filtered[0]
+    has_valid_fix = bool(primary.get("gps_fix")) and (primary.get("latitude") is not None) and (primary.get("longitude") is not None)
+
+    return jsonify({
+        "connected": primary.get("status") == "ONLINE",
+        "device_id": primary.get("device_id"),
+        "status": primary.get("status"),
+        "gps_fix": bool(primary.get("gps_fix")),
+        "fix_status": "3D_FIX" if has_valid_fix else "SEARCHING_FOR_SATELLITES",
+        "satellites": primary.get("satellites", 0),
+        "hdop": primary.get("hdop", 1.0),
+        "accuracy_m": primary.get("estimated_accuracy_m", 5.0),
+        "is_stale": bool(primary.get("is_stale", 0)),
+        "seconds_since_seen": primary.get("seconds_since_seen"),
+        "seconds_since_gps_fix": primary.get("seconds_since_gps_fix"),
+        "mode": primary.get("mode", "HARDWARE"),
+        "position": {
+            "latitude": primary.get("latitude"),
+            "longitude": primary.get("longitude"),
+            "speed_kmh": primary.get("speed_kmh", 0.0),
+            "last_fix_time": primary.get("last_gps_fix_at")
+        } if (primary.get("latitude") is not None and primary.get("longitude") is not None) else None
     })
 
 
@@ -169,11 +237,18 @@ def ingest_telemetry():
     hdop = float(gps_data.get("hdop", 1.0))
     gps_timestamp_ms = gps_data.get("timestamp_ms")
 
-    # Check GPS freshness
-    is_stale = False
+    # Check GPS freshness (handles both Unix epoch timestamps and microcontroller uptime millis)
+    is_stale = bool(gps_data.get("is_stale", False))
     current_time_ms = int(datetime.now().timestamp() * 1000)
-    if gps_timestamp_ms and (current_time_ms - gps_timestamp_ms > 10000):
-        is_stale = True
+    if gps_timestamp_ms:
+        if gps_timestamp_ms > 1e11:  # Unix epoch timestamp (milliseconds)
+            if (current_time_ms - gps_timestamp_ms) > 10000:
+                is_stale = True
+        else:
+            # Microcontroller uptime millis: check explicit age if provided
+            age_ms = gps_data.get("age_ms", 0)
+            if age_ms > 10000:
+                is_stale = True
 
     # Validate coordinate sanity
     gps_is_valid = validate_gps_coordinates(lat, lon, fix_valid=fix_valid, is_stale=is_stale)
@@ -196,7 +271,12 @@ def ingest_telemetry():
         satellites=satellites,
         hdop=hdop,
         seq_num=seq_num,
-        firmware_version=firmware_version
+        firmware_version=firmware_version,
+        latitude=normalized_gps["latitude"],
+        longitude=normalized_gps["longitude"],
+        speed_kmh=float(gps_data.get("speed_kmh", 0.0)),
+        is_stale=is_stale,
+        mode=mode
     )
 
     samples = data["samples"]
@@ -359,8 +439,12 @@ def seed_demo_data():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     host = os.environ.get("HOST", "0.0.0.0")
+    lan_ip = get_laptop_lan_ip()
     print(f"\n=======================================================")
-    print(f"  RoadGuard AI Gateway Server Running on http://{host}:{port}")
-    print(f"  Local testing: http://127.0.0.1:{port}")
+    print(f"  RoadGuard AI Telemetry Gateway Running!")
+    print(f"  Laptop LAN IPv4 Address: {lan_ip}")
+    print(f"  ESP32 BACKEND_URL:      http://{lan_ip}:{port}/api/telemetry")
+    print(f"  Dashboard (Local):      http://localhost:{port}/")
+    print(f"  Network Info Endpoint:  http://localhost:{port}/api/network-info")
     print(f"=======================================================\n")
-    app.run(host=host, port=port, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=True)

@@ -41,6 +41,9 @@
         </div>
 
         <div class="nav-right">
+            <button class="btn-action btn-ping" id="btnTestHwPing" title="Send an immediate hardware heartbeat packet to verify online green dot" style="background:#0284C7; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
+                <i class="fa-solid fa-bolt"></i> Ping Test Link
+            </button>
             <button class="btn-action btn-sim" id="btnRunSim" title="Trigger a live simulated PMPML bus run">
                 <i class="fa-solid fa-play"></i> Run Bus Simulation
             </button>
@@ -67,14 +70,27 @@
 
         <div class="hw-item" id="hwGpsStatus">
             <i class="fa-solid fa-satellite hw-icon"></i>
-            <span class="hw-label">NEO-7M / M8N GPS:</span>
+            <span class="hw-label">NEO-6M / M8N GPS:</span>
             <span class="hw-value" id="hwGpsText">Waiting for fix...</span>
+        </div>
+
+        <div class="hw-item" id="hwTelemetryStatus">
+            <i class="fa-solid fa-tower-broadcast hw-icon"></i>
+            <span class="hw-label">Last Telemetry:</span>
+            <span class="hw-value" id="hwLastTelemetryText">Waiting for packets...</span>
         </div>
 
         <div class="hw-item" id="hwModelStatus">
             <i class="fa-solid fa-microchip hw-icon"></i>
             <span class="hw-label">Inference Model:</span>
             <span class="hw-value" id="hwModelText">Checking status...</span>
+        </div>
+
+        <!-- Live LAN IP display for quick firmware config -->
+        <div class="hw-item" id="hwNetworkInfo" style="display:none;">
+            <i class="fa-solid fa-network-wired hw-icon" style="color:#FBBF24;"></i>
+            <span class="hw-label">Laptop IP:</span>
+            <span class="hw-value" id="hwLanIpText" style="color:#FBBF24; font-family:monospace; font-size:11px;">Detecting...</span>
         </div>
 
         <div class="hw-item hw-right">
@@ -192,6 +208,42 @@
                             </div>
                         </div>
 
+                        <!-- Network Diagnostics Panel -->
+                        <div class="panel-box mt-3" id="networkDiagPanel">
+                            <div class="box-header">
+                                <div class="box-title"><i class="fa-solid fa-plug-circle-bolt"></i> ESP32 Connection Diagnostics</div>
+                                <span id="diagStatusBadge" class="hw-tag" style="color:#FBBF24; border-color:rgba(251,191,36,0.4);">CHECKING...</span>
+                            </div>
+                            <div style="padding:0.85rem 1.15rem; display:flex; flex-direction:column; gap:0.65rem; font-size:0.8rem;">
+                                <div class="dash-stat-row">
+                                    <span class="stat-name"><i class="fa-solid fa-network-wired"></i> Laptop LAN IP (for secrets.h):</span>
+                                    <span class="stat-val" id="diagLanIp" style="font-family:monospace; color:#38BDF8; font-size:12px;">Detecting...</span>
+                                </div>
+                                <div class="dash-stat-row">
+                                    <span class="stat-name"><i class="fa-solid fa-link"></i> ESP32 Target URL:</span>
+                                    <span class="stat-val" id="diagBackendUrl" style="font-family:monospace; color:#38BDF8; font-size:10px; word-break:break-all;">...</span>
+                                </div>
+                                <div class="dash-stat-row">
+                                    <span class="stat-name"><i class="fa-solid fa-clock-rotate-left"></i> Offline Timeout:</span>
+                                    <span class="stat-val" style="color:#34D399;">12 seconds</span>
+                                </div>
+                                <div id="ipChangedWarning" style="display:none; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); border-radius:6px; padding:0.6rem 0.85rem; color:#F87171; font-size:0.78rem; line-height:1.5;">
+                                    <i class="fa-solid fa-triangle-exclamation"></i>
+                                    <strong>IP Address Mismatch Detected!</strong><br>
+                                    Your current laptop IP differs from what was previously configured.<br>
+                                    Update <code>secrets.h</code> → <code>BACKEND_URL</code> and re-flash the ESP32.
+                                </div>
+                                <div style="background:rgba(56,189,248,0.06); border:1px solid rgba(56,189,248,0.2); border-radius:6px; padding:0.6rem 0.85rem; font-size:0.75rem; color:#94A3B8; line-height:1.6;">
+                                    <strong style="color:#38BDF8;"><i class="fa-solid fa-lightbulb"></i> Checklist if ESP32 shows Offline:</strong><br>
+                                    1. Verify hotspot is 2.4 GHz band (not 5 GHz)<br>
+                                    2. Open Windows Settings → Wi-Fi → OPPO K13 → set to <strong style="color:#F8FAFC;">Private Network</strong><br>
+                                    3. Copy the IP above into <code>firmware/secrets.h</code> → <code>BACKEND_URL</code><br>
+                                    4. Re-upload firmware via Arduino IDE on COM6 (115200 baud)<br>
+                                    5. Check Serial Monitor for <code>[HTTP SUCCESS 200]</code>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Priority Action Hotspots -->
                         <div class="panel-box mt-3">
                             <div class="box-header">
@@ -250,14 +302,25 @@
             <section class="page-view" id="view-map">
                 <div class="map-view-wrapper">
                     <div class="map-container-box full-map-box">
+                        <!-- Hardware GPS Warning Banner (visible when waiting for physical satellite lock) -->
+                        <div class="hw-gps-banner" id="hwGpsMapBanner">
+                            <i class="fa-solid fa-satellite-dish fa-spin"></i>
+                            <span id="hwGpsBannerText">Waiting for physical ESP32 GPS fix... (NEO-6M searching for satellites)</span>
+                        </div>
+
                         <div class="box-header">
                             <div class="box-title">
                                 <i class="fa-solid fa-map-location-dot"></i> Pune Road Condition GIS Map
+                                <span class="hw-source-badge" id="mapPrimarySourceBadge"><i class="fa-solid fa-satellite"></i> Primary: ESP32 Hardware GPS</span>
                             </div>
                             <div class="filter-controls">
-                                <!-- Locate Me Browser Button -->
-                                <button class="btn-locate" id="btnLocateMe" title="Pan map to your current location (Browser Geolocation)">
-                                    <i class="fa-solid fa-crosshairs"></i> Locate Me
+                                <!-- Hardware GPS Center Button -->
+                                <button class="btn-locate-hw" id="btnCenterHardwareGps" title="Center map on live ESP32 Hardware GPS position">
+                                    <i class="fa-solid fa-location-arrow"></i> Hardware GPS
+                                </button>
+                                <!-- Browser Location (Clearly labeled Laptop/Phone) -->
+                                <button class="btn-locate" id="btnLocateMe" title="Pan map to browser/laptop geolocation (NOT vehicle hardware)">
+                                    <i class="fa-solid fa-laptop"></i> Browser Location
                                 </button>
                                 <button class="btn-recenter" id="btnRecenterPune" title="Recenter to Pune center">
                                     <i class="fa-solid fa-location-crosshairs"></i> Pune Center
@@ -286,13 +349,13 @@
                         <div id="map"></div>
 
                         <div class="map-legend">
-                            <span class="legend-item"><span class="badge-dot dot-pothole"></span> Pothole</span>
+                            <span class="legend-item"><span class="badge-dot dot-hw-vehicle"></span> ESP32 Hardware (Live Vehicle)</span>
+                            <span class="legend-item"><span class="badge-dot dot-pothole"></span> Pothole Event</span>
                             <span class="legend-item"><span class="badge-dot dot-bump"></span> Speed Breaker</span>
                             <span class="legend-item"><span class="badge-dot dot-rough"></span> Rough Road</span>
                             <span class="legend-item"><span class="badge-dot dot-verified"></span> Verified Repaired</span>
-                            <span class="legend-item"><span class="badge-dot dot-unknown"></span> Review / Unknown</span>
                             <span class="legend-item ml-auto" style="margin-left:auto; color:#94A3B8;">
-                                <i class="fa-solid fa-shield-halved"></i> Validated with OpenStreetMap Tiles (No Watermark)
+                                <i class="fa-solid fa-satellite"></i> Physical GPS is the authoritative location source. Browser location is isolated.
                             </span>
                         </div>
                     </div>
